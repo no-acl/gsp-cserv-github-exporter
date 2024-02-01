@@ -35,6 +35,7 @@ type Datum struct {
 	Forks      float64 `json:"forks"`
 	Stars      float64 `json:"stargazers_count"`
 	OpenIssues float64 `json:"open_issues"`
+	ClosedIssues float64 `json:"closed_issues"`
 	Watchers   float64 `json:"subscribers_count"`
 	Size       float64 `json:"size"`
 	Releases   []Release
@@ -51,6 +52,9 @@ type Pull struct {
 	User struct {
 		Login string `json:"login"`
 	} `json:"user"`
+	CreatedAt string `json:"created_at"`
+	MergedAt string `json:"merged_at"`
+	State string `json:"state"`
 }
 
 type Asset struct {

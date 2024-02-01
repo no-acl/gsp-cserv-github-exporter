@@ -6,23 +6,78 @@ import (
 	"path"
 	"strconv"
 	"strings"
-
+	"github.com/google/go-github/v56/github"
+	"context"
+	"golang.org/x/oauth2"
 	log "github.com/sirupsen/logrus"
 )
 
+type GitHubManager struct {
+	Client *github.Client
+	Owner  string
+	Repo   string
+}
+
+func (gm *GitHubManager) GetPRs(ctx context.Context) ([]*github.PullRequest, error) {
+	var allPRs []*github.PullRequest
+	opts := &github.PullRequestListOptions{State: "all"}
+
+	for {
+		prs, resp, err := gm.Client.PullRequests.List(ctx, gm.Owner, gm.Repo, opts)
+		if err != nil {
+			return nil, err
+		}
+
+		allPRs = append(allPRs, prs...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+
+	return allPRs, nil
+}
+
+type GithubClientImpl struct {
+	client *github.Client
+}
+
+type GithubClient interface {
+
+}
+
+func NewGitHubClient(token string) GithubClient {
+	tokenSource := oauth2.StaticTokenSource(
+		&oauth2.Token{AccessToken: token},
+	)
+	tokenClient := oauth2.NewClient(context.Background(), tokenSource)
+	return &GithubClientImpl{client: github.NewClient(tokenClient)}
+}
+
+func NewGitHubManager(ctx context.Context, owner string, repo string, token string) *GitHubManager {
+	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
+	tc := oauth2.NewClient(ctx, ts)
+	client := github.NewClient(tc)
+
+	return &GitHubManager{
+		Client: client,
+		Owner:  owner,
+		Repo:   repo,
+	}
+}
+
 // gatherData - Collects the data from the API and stores into struct
-func (e *Exporter) gatherData() ([]*Datum, error) {
+func (e *Exporter) gatherData() ([]*Datum,[]*github.PullRequest, error) {
 
 	data := []*Datum{}
-
+	prs := []*github.PullRequest{}
 	responses, err := asyncHTTPGets(e.TargetURLs(), e.APIToken())
 
 	if err != nil {
-		return data, err
+		return data, prs, err
 	}
 
 	for _, response := range responses {
-
 		// Github can at times present an array, or an object for the same data set.
 		// This code checks handles this variation.
 		if isArray(response.body) {
@@ -31,24 +86,22 @@ func (e *Exporter) gatherData() ([]*Datum, error) {
 			data = append(data, ds...)
 		} else {
 			d := new(Datum)
-
 			// Get releases
 			if strings.Contains(response.url, "/repos/") {
 				getReleases(e, response.url, &d.Releases)
 			}
 			// Get PRs
 			if strings.Contains(response.url, "/repos/") {
-				getPRs(e, response.url, &d.Pulls)
+				prs = getPRs(e, response.url)
 			}
 			json.Unmarshal(response.body, &d)
 			data = append(data, d)
 		}
-
 		log.Infof("API data fetched for repository: %s", response.url)
 	}
 
 	//return data, rates, err
-	return data, nil
+	return data, prs, nil
 
 }
 
@@ -108,17 +161,15 @@ func getReleases(e *Exporter, url string, data *[]Release) {
 	json.Unmarshal(releasesResponse[0].body, &data)
 }
 
-func getPRs(e *Exporter, url string, data *[]Pull) {
-	i := strings.Index(url, "?")
-	baseURL := url[:i]
-	pullsURL := baseURL + "/pulls"
-	pullsResponse, err := asyncHTTPGets([]string{pullsURL}, e.APIToken())
+func getPRs(e *Exporter, url string) ([]*github.PullRequest) {
+	ctx := context.Background()
+	gm := NewGitHubManager(ctx, "sky-uk", "gtvd-azman2-aws", e.APIToken())
+	prs, err := gm.GetPRs(ctx)
 
 	if err != nil {
 		log.Errorf("Unable to obtain pull requests from API, Error: %s", err)
 	}
-
-	json.Unmarshal(pullsResponse[0].body, &data)
+	return prs
 }
 
 // isArray simply looks for key details that determine if the JSON response is an array or not.

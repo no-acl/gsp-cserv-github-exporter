@@ -5,11 +5,10 @@ import (
 	"io/ioutil"
 	"net/http"
 	neturl "net/url"
-	"strconv"
 	"time"
-
 	log "github.com/sirupsen/logrus"
 	"github.com/tomnomnom/linkheader"
+	"strconv"
 )
 
 // RateLimitExceededStatus is the status response from github when the rate limit is exceeded.
@@ -25,7 +24,6 @@ func asyncHTTPGets(targets []string, token string) ([]*Response, error) {
 	responses := []*Response{}
 
 	for _, url := range targets {
-
 		go func(url string) {
 			err := getResponse(url, token, ch)
 			if err != nil {
@@ -34,6 +32,7 @@ func asyncHTTPGets(targets []string, token string) ([]*Response, error) {
 		}(url)
 
 	}
+	
 
 	for {
 		select {
@@ -57,10 +56,9 @@ func paginateTargets(targets []string, token string) []string {
 
 	paginated := targets
 
-	for _, url := range targets {
-
+	for _, urlTarget := range targets {
 		// make a request to the original target to get link header if it exists
-		resp, err := getHTTPResponse(url, token)
+		resp, err := getHTTPResponse(urlTarget, token)
 		if err != nil {
 			log.Errorf("Error retrieving Link headers, Error: %s", err)
 			continue
@@ -68,31 +66,23 @@ func paginateTargets(targets []string, token string) []string {
 
 		if resp.Header["Link"] != nil {
 			links := linkheader.Parse(resp.Header["Link"][0])
-
 			for _, link := range links {
-				if link.Rel == "last" {
+				u, err := neturl.Parse(link.URL)
+				if err != nil {
+						log.Errorf("Unable to parse %v %s", u, err)
+				 }
 
-					u, err := neturl.Parse(link.URL)
-					if err != nil {
-						log.Errorf("Unable to parse page URL, Error: %s", err)
-					}
+				q := u.Query()
 
-					q := u.Query()
-
-					lastPage, err := strconv.Atoi(q.Get("page"))
-					if err != nil {
-						log.Errorf("Unable to convert page substring to int, Error: %s", err)
-					}
-
-					// add all pages to the slice of targets to return
-					for page := 2; page <= lastPage; page++ {
-						q.Set("page", strconv.Itoa(page))
-						u.RawQuery = q.Encode()
-						paginated = append(paginated, u.String())
-					}
-
-					break
+				lastPage, err := strconv.Atoi(q.Get("page"))
+				// add all pages to the slice of targets to return
+				// for page := 2; page <= lastPage; page++ {
+			    for page := 2; page <= lastPage; page++ {
+						pageURL := fmt.Sprintf("%s&page=%v", urlTarget, page)
+						paginated = append(paginated, pageURL)
 				}
+				break
+
 			}
 		}
 	}
@@ -101,9 +91,6 @@ func paginateTargets(targets []string, token string) []string {
 
 // getResponse collects an individual http.response and returns a *Response
 func getResponse(url string, token string, ch chan<- *Response) error {
-
-	log.Infof("Fetching %s \n", url)
-
 	resp, err := getHTTPResponse(url, token) // do this earlier
 	if err != nil {
 		return fmt.Errorf("Error fetching http response: %v", err)
